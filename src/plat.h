@@ -24,6 +24,7 @@ int plat_init(void);                 /* 0 = ok */
 uint16_t* plat_fb(void);             /* the 640x480 RGB565 screen, rows are SCR_W pixels apart */
 void plat_present(void);             /* sends the frame, then sleeps to hold the frame rate */
 unsigned plat_buttons(void);         /* held buttons */
+int plat_quit_combo(unsigned b);     /* SELECT+START held together for 500 ms, and only after the pad was seen without them since the start (a stale or glitchy pad word at launch cannot quit) */
 void plat_input_debounce(int ms);     /* device: a button counts as held this many ms after it was last seen down (swallows contact flicker) */
 void plat_set_drain(int on);         /* skip a picture now and then when the display queue is backed up (lag), default on */
 double plat_now_ms(void);            /* monotonic, fractional milliseconds */

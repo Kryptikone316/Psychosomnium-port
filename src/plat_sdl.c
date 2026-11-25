@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <signal.h>
+#include <unistd.h>
 
 #ifdef SF3500
 #include "hwdisp.hpp"
@@ -22,14 +24,21 @@
 #define NSND 16
 
 static uint16_t* g_fb;
-static int g_fps = 50, g_headless, g_shot_every, g_maxframes;
+static int g_fps = 50;
+#ifdef PSY_TEST
+static int g_headless, g_shot_every, g_maxframes;
+#else
+#define g_headless 0                              /* product builds have no headless mode */
+#endif
 static unsigned g_frame, g_last_ticks;
 static double g_next;                         /* when the next frame is due (ms), kept as a fraction: 60 fps = 16.667 ms */
+#ifdef PSY_TEST
 static const char* g_shots;
 static char g_script[2048];
 static unsigned g_shot_list[1024];
 static int g_nshot_list;
 static SDL_Surface* g_surf;
+#endif
 
 #ifdef SF3500
 /* Pad reader thread: polls the shared pad word at ~1 kHz instead of once per frame, so a tap shorter than a frame is not lost, a button
@@ -45,8 +54,8 @@ static SDL_Thread* g_in_thread;
 static double mono_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000.0 + t.tv_nsec / 1e6; }
 static int input_thread(void* ud) {
     unsigned prev = 0;
-    double down_at[16] = {0}, up_at[16] = {0};
-    int logged = 0, i;
+    double down_at[16] = {0}, up_at[16] = {0}, t_begin = mono_ms();
+    int logged = 0, i, start_logged = 0;
     (void)ud;
     while (g_in_run) {
         unsigned raw = joykey_read();
@@ -63,6 +72,7 @@ static int input_thread(void* ud) {
                 g_in_last[i] = now;
             } else if (prev & m) up_at[i] = now;
         }
+        if (raw != prev && now - t_begin < 3000 && start_logged < 12) { fprintf(stderr, "pad: word 0x%04x at +%.0f ms after start\n", raw, now - t_begin); start_logged++; }
         prev = raw;
         g_in_cur = raw;
         SDL_Delay(1);
@@ -133,8 +143,20 @@ static void audio_cb(void* ud, Uint8* stream, int len) {
 }
 #endif
 
+static unsigned g_t_start;
+static void crash_handler(int sig) {
+    char msg[96];
+    int n = snprintf(msg, sizeof msg, "psychosomnium: CRASHED (signal %d) after %u ms\n", sig, SDL_GetTicks() - g_t_start);
+    if (n > 0) (void)!write(2, msg, (size_t)n);
+    _exit(128 + sig);
+}
+
 int plat_init(void) {
+#ifdef PSY_TEST
     const char* s;
+#endif
+    signal(SIGSEGV, crash_handler); signal(SIGBUS, crash_handler); signal(SIGILL, crash_handler); signal(SIGFPE, crash_handler); signal(SIGABRT, crash_handler);
+#ifdef PSY_TEST
     g_headless = getenv("PSY_HEADLESS") && atoi(getenv("PSY_HEADLESS"));
     g_shots = getenv("PSY_SHOTS");
     g_shot_every = getenv("PSY_SHOT_EVERY") ? atoi(getenv("PSY_SHOT_EVERY")) : 0;
@@ -143,14 +165,18 @@ int plat_init(void) {
         while (*s && g_nshot_list < 1024) { char* e; g_shot_list[g_nshot_list++] = (unsigned)strtoul(s, &e, 10); if (e == s) break; s = *e ? e + 1 : e; }
     }
     if ((s = getenv("PSY_JOY"))) snprintf(g_script, sizeof g_script, "%s", s);
+#endif
     g_fb = (uint16_t*)calloc((size_t)SCR_W * SCR_H, sizeof(uint16_t));
     if (!g_fb) return -1;
+#ifdef PSY_TEST
     g_surf = SDL_CreateRGBSurfaceWithFormatFrom(g_fb, SCR_W, SCR_H, 16, SCR_W * 2, SDL_PIXELFORMAT_RGB565);
+#endif
 #ifdef SF3500
     if (SDL_Init(SDL_INIT_TIMER) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return -1; }
     setpriority(PRIO_PROCESS, 0, -10);      /* the card's background scripts wake up often; frames stay even */
     if (!g_headless) {
-        if (hwdisp_init() != 0) { fprintf(stderr, "psychosomnium: hwdisp_init failed\n"); return -1; }
+        { int tries; for (tries = 0; tries < 5 && hwdisp_init() != 0; tries++) { fprintf(stderr, "psychosomnium: hwdisp_init failed (try %d), retrying\n", tries + 1); SDL_Delay(400); }
+          if (!hwdisp_active()) { fprintf(stderr, "psychosomnium: hwdisp_init failed, giving up\n"); return -1; } }
         joykey_init();
         g_in_run = 1;
         g_in_thread = SDL_CreateThread(input_thread, "pad", NULL);
@@ -173,15 +199,18 @@ int plat_init(void) {
     }
 #endif
     g_last_ticks = SDL_GetTicks();
+    g_t_start = g_last_ticks;
     g_next = 0;
     return 0;
 }
 
+#ifdef PSY_TEST
 static void save_shot(void) {
     char path[512];
     snprintf(path, sizeof path, "%s/frame%06u.bmp", g_shots, g_frame);
     SDL_SaveBMP(g_surf, path);
 }
+#endif
 
 /* Frame timing report (log.txt, every 600 frames and at exit): how long a frame takes from end to end, how long the present call blocks, how much of
  * each frame the game's own work uses, how much was slept (headroom), how many frames ran long (> 20 ms) or had their picture skipped. */
@@ -196,7 +225,7 @@ static double pf_rebuild_sum, pf_copy_sum, pf_spr_sum;
 void plat_perf_work(double ms, const double* d) { pf_work_sum += ms; pf_rebuild_sum += d[1]; pf_copy_sum += d[2]; pf_spr_sum += d[3]; }
 double plat_now_ms(void) { return mono_ms2(); }
 static void perf_report(int final) {
-    if (!pf_n || (g_headless && !getenv("PSY_PERF")) || pf_lines >= 200) return;
+    if (!pf_n || pf_lines >= 200) return;
     fprintf(stderr, "perf%s: %u frames, frame avg %.2f max %.1f ms, late(>20ms) %u, skipped pictures %u, present avg %.2f max %.1f ms, game work avg %.2f ms (picture: rebuild %.2f, cache copy %.2f, sprites+text %.2f; rest = logic %.2f), slept avg %.2f ms (woke late avg %.2f max %.1f ms), queue-drain skips %u\n",
             final ? " (exit)" : "", pf_n, pf_sum / pf_n, pf_max, pf_late, pf_skipped, pf_present_sum / pf_n, pf_present_max, pf_work_sum / pf_n, pf_rebuild_sum / pf_n, pf_copy_sum / pf_n, pf_spr_sum / pf_n, (pf_work_sum - pf_rebuild_sum - pf_copy_sum - pf_spr_sum) / pf_n, pf_sleep_sum / pf_n, pf_over_sum / pf_n, pf_over_max, pf_drained);
     pf_lines++;
@@ -231,6 +260,7 @@ static void pace(int sleep_ok) {
     }
 }
 
+#ifdef PSY_TEST
 /* test hook PSY_HASHFILE=<path>: one line per presented frame, "<frame> <hash>", hash = sum(rgb565[i] * w[i]) mod 2^64 with w[i] = i*2654435761+12345 (32-bit wrap);
  * tools/wine/seqcmp.py computes the same for the original's recorded frames. */
 static void write_hash(void) {
@@ -243,10 +273,14 @@ static void write_hash(void) {
     fflush(f);
 }
 
+#endif
+
 void plat_present(void) {
     double t0 = mono_ms2(), dt;
+#ifdef PSY_TEST
     { const char* rp = getenv("PSY_RAWFRAME"); if (rp && g_frame + 1 == (unsigned)atoi(rp) && getenv("PSY_RAWFILE")) { FILE* rf = fopen(getenv("PSY_RAWFILE"), "wb"); if (rf) { fwrite(g_fb, 1, (size_t)SCR_W * SCR_H * 2, rf); fclose(rf); } } }       /* test hook: dump one frame as raw RGB565 */
     if (getenv("PSY_HASHFILE")) write_hash();
+#endif
 #ifdef SF3500
     if (!g_headless) hwdisp_present(g_fb, SCR_W, SCR_H, SCR_W * 2);
 #else
@@ -271,9 +305,11 @@ void plat_present(void) {
     }
     pf_present_sum += dt; if (dt > pf_present_max) pf_present_max = dt;
     g_frame++;
+#ifdef PSY_TEST
     if (g_shots && g_shot_every > 0 && g_frame % (unsigned)g_shot_every == 0) save_shot();
     if (g_shots && g_nshot_list) { int k; for (k = 0; k < g_nshot_list; k++) if (g_shot_list[k] == g_frame) save_shot(); }
     if (g_maxframes && g_frame >= (unsigned)g_maxframes) plat_quit(0);
+#endif
     pace(1);
     perf_frame();
 }
@@ -285,12 +321,15 @@ int plat_behind(void) {
 void plat_skip_frame(void) {
     pf_skipped++;
     g_frame++;
+#ifdef PSY_TEST
     if (g_maxframes && g_frame >= (unsigned)g_maxframes) plat_quit(0);
+#endif
     pace(g_drain_skip);                              /* a queue-drain skip keeps the normal frame time; only catching up runs without sleeping */
     g_drain_skip = 0;
     perf_frame();
 }
 
+#ifdef PSY_TEST
 /* "frame:mask,frame:mask": from that frame on the pad reads as mask until the next entry. */
 static unsigned scripted(void) {
     static unsigned cur;
@@ -322,9 +361,13 @@ static unsigned fuzz(void) {
     return cur;
 }
 
+#endif
+
 unsigned plat_buttons(void) {
+#ifdef PSY_TEST
     if (g_script[0]) return scripted();
     if (g_headless && getenv("PSY_FUZZ")) return fuzz();
+#endif
 #ifdef SF3500
     return g_headless ? 0 : (g_in_run ? input_state() : joykey_read());     /* joykey's order is the B_* order */
 #else
@@ -449,7 +492,20 @@ void plat_stream_stop(void) {
 #endif
 }
 
+int plat_quit_combo(unsigned b) {
+    static int armed, down;
+    static unsigned t0;
+    const unsigned both = B_SELECT | B_START;
+    if (!(b & B_SELECT) && !(b & B_START)) { armed = 1; down = 0; return 0; }
+    if ((b & both) != both) { down = 0; return 0; }
+    if (!armed) return 0;
+    if (!down) { down = 1; t0 = SDL_GetTicks(); }
+    if (SDL_GetTicks() - t0 >= 500) { fprintf(stderr, "psychosomnium: quit: SELECT+START held\n"); return 1; }
+    return 0;
+}
+
 void plat_quit(int code) {
+    fprintf(stderr, "psychosomnium: exit code %d after %u ms\n", code, SDL_GetTicks() - g_t_start);
     perf_report(1);
 #ifdef SF3500
     g_in_run = 0;

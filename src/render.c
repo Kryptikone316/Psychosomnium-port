@@ -40,8 +40,12 @@ static inline void mark_dirty(int x0, int y0, int x1, int y1) {
 }
 void r_target(int to_cache) { tgt = to_cache ? cache : fb; if (to_cache) full_dirty = 1; }   /* the cache is about to change: next copy is a full one */
 void r_blit_cache(void) {
+#ifdef PSY_TEST
     static int force = -1;
     if (force < 0) force = getenv("PSY_FULLCOPY") != NULL;     /* test hook: always copy the whole picture (to compare against the dirty-rectangle path) */
+#else
+    const int force = 0;
+#endif
     if (full_dirty || force) memcpy(fb, cache, (size_t)W * H * 2);
     else {
         int i, y;

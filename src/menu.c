@@ -239,7 +239,7 @@ int menu_run(void) {
     for (;;) {
         unsigned b = plat_buttons(), pressed = b & ~prev;
         prev = b;
-        if ((b & B_SELECT) && (b & B_START)) return 0;
+        if (plat_quit_combo(b)) return 0;
         if (screen == 0) {
             if (pressed & B_UP) { sel = (sel + 2) % 3; sound_play(SND_STEP); }
             if (pressed & B_DOWN) { sel = (sel + 1) % 3; sound_play(SND_STEP); }
@@ -247,7 +247,7 @@ int menu_run(void) {
                 sound_play(SND_SELECT);
                 if (sel == 0) return 1;
                 if (sel == 1) { screen = 1; ssel = 0; stop = 0; }
-                else return 0;
+                else { fprintf(stderr, "psychosomnium: quit: Exit Game chosen\n"); return 0; }
             }
             if (pressed & B_B) { sel = 2; }
             draw_main(sel);

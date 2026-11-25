@@ -521,7 +521,11 @@ void ev_step(Inst* s) {
 void ev_collision(Inst* s, Inst* other, int target) {
     switch (s->obj) {
         case O_P1: case O_P2: case O_P5: case O_P4:
-            if (target == O_DANGEROUS) { if (getenv("PSY_COLLDBG")) fprintf(stderr, "hit: obj %d at %.0f,%.0f (y %.1f) by obj %d at %.0f,%.0f scale %.0f,%.0f\n", s->obj, s->x, s->y, s->y, other->obj, other->x, other->y, other->xscale, other->yscale); die_here(s); }
+            if (target == O_DANGEROUS) {
+#ifdef PSY_TEST
+                if (getenv("PSY_COLLDBG")) fprintf(stderr, "hit: obj %d at %.0f,%.0f (y %.1f) by obj %d at %.0f,%.0f scale %.0f,%.0f\n", s->obj, s->x, s->y, s->y, other->obj, other->x, other->y, other->xscale, other->yscale);
+#endif
+                die_here(s); }
             else if (target == O_BLOCK && s->obj != O_P4) { move_contact_solid(s, s->direction, s->speed); set_vspeed(s, 0); s->image_index = 0; }
             break;
         case O_P3:

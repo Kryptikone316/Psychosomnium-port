@@ -283,7 +283,9 @@ int check_collision(Inst* a, Inst* b) {
     for (py = t; py <= bt; py++)
         for (px = l; px <= r; px++)
             if (mask_pixel(sa, sia, px, py, x1, y1, a->xscale, a->yscale) && mask_pixel(sb, sib, px, py, x2, y2, b->xscale, b->yscale)) {
+#ifdef PSY_TEST
                 if (getenv("PSY_COLLDBG2")) fprintf(stderr, "coll a=obj%d mask%d bbox x%d..%d y%d..%d  b=obj%d mask%d bbox x%d..%d y%d..%d at px,py=%d,%d\n", a->obj, sia, ba.l, ba.r, ba.t, ba.b, b->obj, sib, bb.l, bb.r, bb.t, bb.b, px, py);
+#endif
                 return 1;
             }
     return 0;
@@ -590,7 +592,9 @@ static void gm_draw(void) {
     for (k = 1; k < nd; k++) { Inst* v = dyn[k]; for (j = k - 1; j >= 0 && dyn[j]->depth < v->depth; j--) dyn[j + 1] = dyn[j]; dyn[j + 1] = v; }
     t_a = now_ms();
     if (!cache_has || sig != cache_sig) {
+#ifdef PSY_TEST
         if (getenv("PSY_CACHEDBG")) fprintf(stderr, "static layer rebuilt (%d static, %d dynamic)\n", ns, nd);
+#endif
         r_target(1);
         r_clear(G.bg);
         for (k = 0; k < ns; k++) { if (has_draw_event(sta[k]->obj)) ev_draw(sta[k]); else r_sprite(sta[k]->sprite, sta[k]->image_index, sta[k]->x, sta[k]->y, sta[k]->xscale, sta[k]->yscale, sta[k]->blend, sta[k]->alpha); }
@@ -672,7 +676,9 @@ void gm_frame(unsigned keys, int draw) {
 void gm_init(void) {
     int i, x, y;
     rng_state ^= (uint32_t)time(NULL) * 2654435761u;
+#ifdef PSY_TEST
     if (getenv("PSY_SEED")) rng_state = (uint32_t)atoi(getenv("PSY_SEED"));      /* test hook: reproducible random numbers (death particles) */
+#endif
     if (!rng_state) rng_state = 1;
     last_id = A.last_inst_id;
     for (i = 0; i < N_SPRITES; i++) {
