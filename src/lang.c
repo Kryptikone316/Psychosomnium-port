@@ -54,9 +54,11 @@ int lang_load(const char* dir, int idx) {
     uint32_t n, i;
     unload();
     if (idx <= 0 || idx >= N_LANGS) return 0;
-    snprintf(path, sizeof path, "%s/lang/%s.pak", dir, LANG_CODES[idx]);
+    /* the packs live in <port>/lang (next to gamedata); <port>/gamedata/lang is accepted too */
+    snprintf(path, sizeof path, "%s/../lang/%s.pak", dir, LANG_CODES[idx]);
     b = slurp(path, &len);
-    if (!b || len < 20 || memcmp(b, "PSYL", 4) != 0 || rd32(b + 4) != 1) { free(b); fprintf(stderr, "psychosomnium: language pack %s not found, using English\n", path); return 0; }
+    if (!b) { snprintf(path, sizeof path, "%s/lang/%s.pak", dir, LANG_CODES[idx]); b = slurp(path, &len); }
+    if (!b || len < 20 || memcmp(b, "PSYL", 4) != 0 || rd32(b + 4) != 1) { free(b); fprintf(stderr, "psychosomnium: language pack %s/../lang/%s.pak not found, using English\n", dir, LANG_CODES[idx]); return 0; }
     g_pak = b;
     g_flags = (int)rd32(b + 8);
     g_font.ascent = (int)rd16(b + 12); g_font.line = (int)rd16(b + 14);
@@ -74,13 +76,17 @@ int lang_load(const char* dir, int idx) {
     g_idx = idx;
     r_set_font(&g_font, g_flags & 1);
     /* the dialogue (optional: without it the game's English text is shown, in the pack's font) */
-    snprintf(path, sizeof path, "%s/lang/%s.script", dir, LANG_CODES[idx]);
+    snprintf(path, sizeof path, "%s/../lang/%s.script", dir, LANG_CODES[idx]);
     g_script = slurp(path, &len);
-    if (!g_script) {                                       /* or from the optional download: any .zip in the lang folder holding <code>.script */
+    if (!g_script) { snprintf(path, sizeof path, "%s/lang/%s.script", dir, LANG_CODES[idx]); g_script = slurp(path, &len); }
+    if (!g_script) {                                       /* the optional download is a zip in either lang folder */
+        static const char* const sub[2] = { "%s/../lang", "%s/lang" };
+        int si;
+        for (si = 0; si < 2 && !g_script; si++) {                                       /* or from the optional download: any .zip in the lang folder holding <code>.script */
         char zdir[1200], want[32];
         DIR* d;
         struct dirent* de;
-        snprintf(zdir, sizeof zdir, "%s/lang", dir);
+        snprintf(zdir, sizeof zdir, sub[si], dir);
         snprintf(want, sizeof want, "%s.script", LANG_CODES[idx]);
         d = opendir(zdir);
         while (d && !g_script && (de = readdir(d))) {
@@ -94,6 +100,7 @@ int lang_load(const char* dir, int idx) {
             }
         }
         if (d) closedir(d);
+        }
     }
     if (g_script && len >= 12 && memcmp(g_script, "PSYS", 4) == 0 && rd32(g_script + 4) == 1) {
         unsigned char* q = g_script + 12;
