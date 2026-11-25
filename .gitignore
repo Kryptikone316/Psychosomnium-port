@@ -1,0 +1,14 @@
+build-host/
+build-san/
+build-sf3500/
+work/
+package/
+*.o
+tools/fonts-big/
+tools/lang/private/
+build-lang/*.script
+dist/
+__pycache__/
+*.pyc
+package-src/boxart.png
+build-lang/
